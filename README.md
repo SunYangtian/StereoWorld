@@ -1,6 +1,6 @@
 # Stereo World Model: Camera-Guided Stereo Video Generation
 
-[![Paper](https://img.shields.io/badge/arXiv-PDF-b31b1b)](https://arxiv.org/abs/xxx)
+[![Paper](https://img.shields.io/badge/arXiv-PDF-b31b1b)](https://arxiv.org/abs/2603.17375)
 [![Website](imgs/badge-website.svg)](https://sunyangtian.github.io/StereoWorld-web/)
 
 ![teaser](./imgs/teaser.jpg)
