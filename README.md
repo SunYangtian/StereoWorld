@@ -19,7 +19,7 @@ If you find our work useful, please consider citing:
 @article{sun2026stereo,
         title={Stereo World Model: Camera-Guided Stereo Video Generation},
         author={Sun Yang-Tian and Huang Zehuan and Niu Yifan and Ma Lin and Cao Yan-Pei and Ma Yuewen and Qi Xiaojuan},
-        journal={xxx},
+        journal={arXiv preprint arXiv:2603.17375},
         year={2026}
       }
 ```
