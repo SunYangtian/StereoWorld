@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local environments and caches
+.venv/
+venv/
+.cache/
+
+# Runtime outputs
+output/
+shell_logs/
+demo/
+
+# Local model checkpoints / weights
+weights/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
