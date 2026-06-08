@@ -45,7 +45,7 @@ from transformers import AutoTokenizer, UMT5EncoderModel
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import export_to_video
 
-from camera_utils import build_control_stereo_camera_from_action
+from camera_utils import build_control_stereo_camera_from_action, extrinsic_to_raymap
 
 
 parser = argparse.ArgumentParser()
@@ -72,6 +72,8 @@ parser.add_argument("--action_speed", type=float, nargs="+", default=[6],
                     help="Speed per action segment, e.g. --action_speed 4 6")
 parser.add_argument("--baseline", type=float, default=0.2,
                     help="Stereo baseline distance")
+parser.add_argument("--use_raymap", action="store_true",
+                    help="Enable raymap conditioning (requires checkpoint trained with raymap)")
 parser.add_argument("--ulysses_degree", type=int, default=1,
                     help="Ulysses sequence parallel degree (head parallel)")
 parser.add_argument("--ring_degree", type=int, default=1,
@@ -100,6 +102,9 @@ transformer_additional_kwargs = {
     "add_control_adapter": True,
     "boundary": args.boundary,
 }
+
+if args.use_raymap:
+    transformer_additional_kwargs["in_dim"] = 48 + 6
 
 print("Loading transformer...")
 transformer = Wan2_2Transformer3DModel.from_pretrained(
@@ -165,17 +170,6 @@ def to_uint8_video(frames):
 
 def run_single(image_path, caption, action_seq, action_speed_list, scene_name, pipeline, args):
     """Run stereo inference on a single example."""
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Input image not found: {image_path}")
-
-    if len(action_speed_list) == 1 and len(action_seq) > 1:
-        action_speed_list = action_speed_list * len(action_seq)
-    elif len(action_speed_list) != len(action_seq):
-        raise ValueError(
-            "`action_speed_list` must contain either one value or one value per action segment "
-            f"(got {len(action_speed_list)} speeds for {len(action_seq)} actions)"
-        )
-
     target_h, target_w = args.H, args.W
 
     # Load and center-crop image to target aspect ratio
@@ -193,6 +187,10 @@ def run_single(image_path, caption, action_seq, action_speed_list, scene_name, p
         img = img[y0:y0 + new_h, :]
     img = np.array(PILImage.fromarray(img).resize((target_w, target_h), PILImage.LANCZOS))
     img = img.astype(np.float32).transpose(2, 0, 1)  # [3, H, W]
+
+    # Expand action speed if needed
+    if len(action_speed_list) == 1 and len(action_seq) > 1:
+        action_speed_list = action_speed_list * len(action_seq)
 
     # Build stereo camera control
     stereo_cam = build_control_stereo_camera_from_action(
@@ -215,6 +213,19 @@ def run_single(image_path, caption, action_seq, action_speed_list, scene_name, p
 
     print(f"  Resolution: {target_h}x{target_w}, stereo frames: {pipeline_num_frames} (2x{T_latent} latent)")
 
+    # Build raymap if enabled (before dtype cast, needs float32)
+    raymap = None
+    if args.use_raymap:
+        vae_downsample = vae.config.spatial_compression_ratio
+        raymap = extrinsic_to_raymap(
+            control_camera_video["viewmats"].float(),
+            control_camera_video["K"].float(),
+            H=target_h, W=target_w,
+            vae_downsample=vae_downsample,
+        )  # [T, 6, H_down, W_down]
+        raymap = torch.as_tensor(raymap).permute(1, 0, 2, 3).to(device, dtype)  # [6, T, H_down, W_down]
+        print(f"  Raymap: {raymap.shape}")
+
     # Move to device
     control_camera_video = {k: v.to(device, dtype) if v.is_floating_point() else v.to(device)
                             for k, v in control_camera_video.items()}
@@ -232,6 +243,7 @@ def run_single(image_path, caption, action_seq, action_speed_list, scene_name, p
         num_frames=pipeline_num_frames,
         start_image=start_image,
         control_camera_video=control_camera_video,
+        raymap=raymap,
         num_inference_steps=args.num_inference_steps,
         guidance_scale=args.guidance_scale,
         shift=args.shift,
@@ -314,20 +326,14 @@ else:
 
 print(f"Total jobs: {len(jobs)}\n")
 
-num_failed = 0
 for i, job in enumerate(jobs):
     print(f"=== [{i+1}/{len(jobs)}] {job['scene_name']} ===")
     try:
         run_single(job["image_path"], job["caption"], job["action_seq"],
                    job["action_speed_list"], job["scene_name"], pipeline, args)
     except Exception as e:
-        num_failed += 1
         print(f"  [ERROR] {e}")
         import traceback
         traceback.print_exc()
-
-if num_failed:
-    print(f"\nDone with {num_failed}/{len(jobs)} failed job(s).")
-    sys.exit(1)
 
 print("\nAll done.")

@@ -6,9 +6,11 @@ Implements action-to-camera conversion:
 import math
 import numpy as np
 import torch
+import torch.nn.functional as F
 from typing import List
 from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
+from einops import rearrange
 
 
 # --- Action mapping ---
@@ -135,13 +137,6 @@ def action_to_poses(action_seq, action_speed_list, video_length):
 
     for idx, action_id in enumerate(action_seq):
         keys = list(action_id)
-        invalid_keys = [key for key in keys if key not in ACTION_DICT]
-        if invalid_keys:
-            valid_keys = "".join(sorted(ACTION_DICT.keys()))
-            raise ValueError(
-                f"Invalid action key(s) {invalid_keys} in action segment '{action_id}'. "
-                f"Valid keys are: {valid_keys}"
-            )
         motion_types = [ACTION_DICT[key] for key in keys]
         speed = action_speed_list[idx]
         positions, rotations, current_pose = generate_composite_motion_segment(
@@ -346,3 +341,71 @@ def build_control_stereo_camera_from_action(action_seq, action_speed_list, video
         "timestep1": timestep.clone(),
         "timestep2": timestep.clone(),
     }
+
+
+# --- Raymap ---
+
+def _batch_rigid_inv(view_mats):
+    """Invert batch of [*, 4, 4] rigid transforms."""
+    R = view_mats[..., :3, :3]
+    T = view_mats[..., :3, 3:]
+    R_inv = R.transpose(-1, -2)
+    T_inv = -R_inv @ T
+    inv = torch.zeros_like(view_mats)
+    inv[..., :3, :3] = R_inv
+    inv[..., :3, 3:] = T_inv
+    inv[..., 3, 3] = 1.0
+    return inv
+
+
+def extrinsic_to_raymap(
+    extrinsic, intrinsic,
+    ray_o_scale_factor=10.0, dmax=1.0,
+    H=480, W=720, vae_downsample=8, align_corners=False,
+):
+    """Convert w2c extrinsics + normalized intrinsics to raymap [N, 6, H_down, W_down]."""
+    is_numpy = isinstance(extrinsic, np.ndarray)
+    if is_numpy:
+        extrinsic = torch.from_numpy(extrinsic).float()
+        intrinsic = torch.from_numpy(intrinsic).float()
+
+    camera_pose = _batch_rigid_inv(extrinsic)
+
+    # Build per-pixel ray directions from intrinsics
+    fu = intrinsic[:, 0, 0].unsqueeze(-1).unsqueeze(-1)
+    fv = intrinsic[:, 1, 1].unsqueeze(-1).unsqueeze(-1)
+    cu = intrinsic[:, 0, 2].unsqueeze(-1).unsqueeze(-1)
+    cv = intrinsic[:, 1, 2].unsqueeze(-1).unsqueeze(-1)
+
+    u, v = torch.meshgrid(torch.arange(W), torch.arange(H), indexing="xy")
+    u = (u / W).unsqueeze(0).expand(intrinsic.shape[0], -1, -1).to(intrinsic.device)
+    v = (v / H).unsqueeze(0).expand(intrinsic.shape[0], -1, -1).to(intrinsic.device)
+
+    z_cam = torch.ones_like(u)
+    x_cam = (u - cu) / fu
+    y_cam = (v - cv) / fv
+    ones = torch.ones_like(u)
+    raymap_cam = torch.stack((x_cam, y_cam, z_cam, ones), dim=-1)  # [N, H, W, 4]
+
+    T, rh, rw, _ = raymap_cam.shape
+    raymap_cam = rearrange(raymap_cam, "t h w c -> t c (h w)")
+
+    _camera_pose = camera_pose.clone()
+    _camera_pose[:, :3, 3] = 0.0
+    raymap_world = torch.bmm(_camera_pose, raymap_cam)
+    raymap_world = rearrange(raymap_world, "t c (h w) -> t c h w", h=rh, w=rw)
+
+    if vae_downsample != 1:
+        raymap_world = F.interpolate(
+            raymap_world, scale_factor=1 / vae_downsample,
+            mode="bilinear", align_corners=align_corners,
+        )
+
+    ray_d = raymap_world[:, :3]
+    ray_o = camera_pose[:, :3, 3].unsqueeze(-1).unsqueeze(-1).expand_as(ray_d)
+    raymap = torch.cat([ray_d, ray_o], dim=1)  # [N, 6, H_down, W_down]
+
+    if is_numpy:
+        raymap = raymap.cpu().numpy()
+    return raymap
+

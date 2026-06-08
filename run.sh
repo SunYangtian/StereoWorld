@@ -8,9 +8,9 @@
 
 set -e
 
-# Defaults
-PIPELINE_DIR="${PIPELINE_DIR:-./weights/stereoworld_v1/pipeline}"
-EVAL_JSON="./ExpData/demo_single_eval.json"
+# ── Defaults ───────────────────────────────────────────────────────────
+PIPELINE_DIR="weights/StereoWorldModel"
+EVAL_JSON="./ExpData//demo_custom_eval.json"
 OUTPUT_DIR="output"
 NUM_GPUS=4
 H=480
@@ -19,9 +19,10 @@ NUM_FRAMES=81
 FPS=16
 BASELINE=0.2
 SEED=42
-TORCHRUN="${TORCHRUN:-torchrun}"
+USE_RAYMAP=""
+MASTER_PORT=${MASTER_PORT:-29500}
 
-# Parse arguments
+# ── Parse arguments ────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case $1 in
         --pipeline_dir) PIPELINE_DIR="$2"; shift 2;;
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
         --fps)          FPS="$2"; shift 2;;
         --baseline)     BASELINE="$2"; shift 2;;
         --seed)         SEED="$2"; shift 2;;
+        --use_raymap)   USE_RAYMAP="--use_raymap"; shift 1;;
         *) echo "Unknown option: $1"; exit 1;;
     esac
 done
@@ -41,17 +43,6 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 mkdir -p shell_logs
-
-if [[ ! -d "$PIPELINE_DIR" ]]; then
-    echo "Pipeline directory not found: $PIPELINE_DIR"
-    echo "Set PIPELINE_DIR or pass --pipeline_dir /path/to/stereoworld_v1/pipeline"
-    exit 1
-fi
-
-if [[ ! -f "$EVAL_JSON" ]]; then
-    echo "Eval JSON not found: $EVAL_JSON"
-    exit 1
-fi
 
 echo "Pipeline:   $PIPELINE_DIR"
 echo "Eval JSON:  $EVAL_JSON"
@@ -61,11 +52,12 @@ echo "Resolution: ${H}x${W}, ${NUM_FRAMES} frames, ${FPS} fps"
 echo "Baseline:   $BASELINE"
 echo ""
 
-"$TORCHRUN" --nproc_per_node=$NUM_GPUS inference.py \
+torchrun --nproc_per_node=$NUM_GPUS --master_port=$MASTER_PORT inference.py \
     --pipeline_dir "$PIPELINE_DIR" \
     --eval_json "$EVAL_JSON" \
     --output_dir "$OUTPUT_DIR" \
     --baseline "$BASELINE" \
+    $USE_RAYMAP \
     --ulysses_degree "$NUM_GPUS" --ring_degree 1 \
     --H "$H" --W "$W" \
     --num_frames "$NUM_FRAMES" \

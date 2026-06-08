@@ -33,10 +33,17 @@ The code is tested with CUDA 12.6 and PyTorch 2.4+. For faster attention, instal
 
 ## Model Weights
 
-Download or prepare the StereoWorld pipeline weights in the following layout:
+Download the model from Hugging Face:
+
+```bash
+huggingface-cli download Yang-Tian/StereoWorldModel \
+  --local-dir weights/StereoWorldModel
+```
+
+The downloaded pipeline directory should contain:
 
 ```text
-weights/stereoworld_v1/pipeline/
+weights/StereoWorldModel/
   transformer/
   vae/
   tokenizer/
@@ -44,7 +51,8 @@ weights/stereoworld_v1/pipeline/
   scheduler/
 ```
 
-You can also keep the weights elsewhere and pass `--pipeline_dir /path/to/stereoworld_v1/pipeline`.
+You can keep the weights anywhere and pass the local model directory with `--pipeline_dir`.
+When using this checkpoint, add `--use_raymap` during inference.
 
 ## TODO
 
@@ -54,19 +62,24 @@ You can also keep the weights elsewhere and pass `--pipeline_dir /path/to/stereo
 
 ## Quick Start
 
-Run the included single-image demo:
+Run the included demo set on one GPU:
 
 ```bash
-bash run_single.sh --pipeline_dir /path/to/stereoworld_v1/pipeline
+bash run_single.sh \
+  --pipeline_dir weights/StereoWorldModel \
+  --use_raymap
 ```
 
 Run on multiple GPUs:
 
 ```bash
-bash run.sh --pipeline_dir /path/to/stereoworld_v1/pipeline --num_gpus 4
+bash run.sh \
+  --pipeline_dir weights/StereoWorldModel \
+  --num_gpus 4 \
+  --use_raymap
 ```
 
-By default, the scripts use `ExpData/demo_single_eval.json`, which points to the sample input image included in this repository. `ExpData/demo_custom_eval.json` contains a larger 100-entry prompt/action list; use it only after placing the corresponding input images under `ExpData/demo_custom/`.
+By default, the scripts use `ExpData/demo_custom_eval.json`, which contains 33 prompt/action examples. The corresponding input images are included under `ExpData/demo_custom/`.
 
 ## Custom Inference
 
@@ -74,7 +87,7 @@ Batch inference from an eval JSON:
 
 ```bash
 python3 inference.py \
-  --pipeline_dir /path/to/stereoworld_v1/pipeline \
+  --pipeline_dir weights/StereoWorldModel \
   --eval_json /path/to/eval.json \
   --output_dir output \
   --H 480 --W 832 \
@@ -86,7 +99,7 @@ Single-folder inference:
 
 ```bash
 python3 inference.py \
-  --pipeline_dir /path/to/stereoworld_v1/pipeline \
+  --pipeline_dir weights/StereoWorldModel \
   --input_dir /path/to/sample_folder \
   --action_seq w wl wj \
 ```
@@ -125,6 +138,8 @@ Relative `image_path` values are resolved relative to the JSON file. `scene_name
 | `i` | pitch up |
 | `k` | pitch down |
 
+Actions can be combined in one segment, for example `wl` means moving forward while yawing right.
+
 ## Outputs
 
 Each job writes:
@@ -133,6 +148,15 @@ Each job writes:
 - `{scene_name}.json`: metadata including caption, action sequence, baseline, intrinsics, and camera poses.
 
 `num_frames` must satisfy `1 + 4k`, for example `81` or `121`. Height and width must be divisible by 8.
+
+## Acknowledgements
+
+We thank the authors of the following projects and models for their open-source contributions:
+
+- [prope](https://github.com/liruilong940607/prope)
+- [DreamX-World](https://github.com/AMAP-ML/DreamX-World)
+- [StereoCrafter](https://github.com/TencentARC/StereoCrafter)
+- [Wan-AI](https://huggingface.co/Wan-AI)
 
 ## Citation
 
